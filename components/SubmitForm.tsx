@@ -3,18 +3,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { compressToWebp, putToR2 } from "@/lib/uploadPhoto";
-
-type Branch = { _id: string; name: string };
+type Branch = { _id: string; name: string; active?: boolean };
+type Upload = { url: string; key: string };
 
 export default function SubmitForm() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [code, setCode] = useState("");
   const [itemName, setItemName] = useState("");
-  const [lookupState, setLookupState] = useState<"" | "checking" | "found" | "notfound">("");
+  const [lookupState, setLookupState] = useState<
+    "" | "checking" | "found" | "notfound"
+  >("");
   const [quantity, setQuantity] = useState("");
   const [branchId, setBranchId] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
+  const previews = useMemo(
+    () => files.map((f) => URL.createObjectURL(f)),
+    [files],
+  );
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -22,16 +27,16 @@ export default function SubmitForm() {
   useEffect(() => {
     fetch("/api/branches")
       .then((r) => r.json())
-      .then((data) => setBranches(data.filter((b: any) => b.active !== false)))
+      .then((data: Branch[]) =>
+        setBranches(data.filter((b) => b.active !== false)),
+      )
       .catch(() => toast.error("Could not load branches."));
   }, []);
 
-  // build/cleanup object URLs for previews
+  // revoke object URLs when previews change / component unmounts
   useEffect(() => {
-    const urls = files.map((f) => URL.createObjectURL(f));
-    setPreviews(urls);
-    return () => urls.forEach((u) => URL.revokeObjectURL(u));
-  }, [files]);
+    return () => previews.forEach((u) => URL.revokeObjectURL(u));
+  }, [previews]);
 
   async function lookupCode() {
     const c = code.trim();
@@ -42,7 +47,9 @@ export default function SubmitForm() {
     }
     setLookupState("checking");
     try {
-      const res = await fetch(`/api/items/lookup?code=${encodeURIComponent(c)}`);
+      const res = await fetch(
+        `/api/items/lookup?code=${encodeURIComponent(c)}`,
+      );
       const data = await res.json();
       if (data.found) {
         setItemName(data.name);
@@ -78,7 +85,7 @@ export default function SubmitForm() {
       qtyNum > 0 &&
       branchId !== "" &&
       files.length >= 1,
-    [lookupState, itemName, qtyNum, branchId, files.length]
+    [lookupState, itemName, qtyNum, branchId, files.length],
   );
 
   async function submit() {
@@ -94,7 +101,7 @@ export default function SubmitForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ count: blobs.length }),
       });
-      const { uploads } = await presignRes.json();
+      const { uploads } = (await presignRes.json()) as { uploads: Upload[] };
 
       setProgress("Uploading…");
       await Promise.all(blobs.map((b, i) => putToR2(uploads[i].url, b)));
@@ -107,7 +114,7 @@ export default function SubmitForm() {
           code: code.trim(),
           quantity: qtyNum,
           branchId,
-          photos: uploads.map((u: any) => ({ fullKey: u.key })),
+          photos: uploads.map((u) => ({ fullKey: u.key })),
         }),
       });
       const saved = await saveRes.json();
@@ -123,8 +130,9 @@ export default function SubmitForm() {
       setQuantity("");
       setBranchId("");
       setFiles([]);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Something went wrong.");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg || "Something went wrong.");
     } finally {
       setBusy(false);
       setProgress("");
@@ -137,7 +145,7 @@ export default function SubmitForm() {
 
       {/* Code */}
       <div>
-        <label className="block text-sm font-medium mb-1">Item code</label>
+        <label className="block text-sm font-medium mb-1">كود الصنف</label>
         <input
           value={code}
           onChange={(e) => setCode(e.target.value)}
@@ -166,7 +174,9 @@ export default function SubmitForm() {
 
       {/* Quantity */}
       <div>
-        <label className="block text-sm font-medium mb-1">Quantity</label>
+        <label className="block text-sm font-medium mb-1">
+          بالوحدة (قرص أو أمبول أو لبوسة)
+        </label>
         <input
           type="number"
           step="any"
@@ -180,7 +190,7 @@ export default function SubmitForm() {
 
       {/* Branch */}
       <div>
-        <label className="block text-sm font-medium mb-1">Branch</label>
+        <label className="block text-sm font-medium mb-1">الفرع</label>
         <select
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}
@@ -197,7 +207,9 @@ export default function SubmitForm() {
 
       {/* Photos + previews */}
       <div>
-        <label className="block text-sm font-medium mb-1">Photos (1 or more)</label>
+        <label className="block text-sm font-medium mb-1">
+          Photos (1 or more)
+        </label>
         <input
           type="file"
           accept="image/*"
@@ -232,7 +244,8 @@ export default function SubmitForm() {
           </div>
         )}
         <p className="mt-1 text-xs text-muted-foreground">
-          {files.length} photo(s) selected{files.length < 1 ? " — add at least 1" : ""}
+          {files.length} photo(s) selected
+          {files.length < 1 ? " — add at least 1" : ""}
         </p>
       </div>
 
